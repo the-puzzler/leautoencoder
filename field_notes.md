@@ -3,3 +3,5 @@ sepeareting sigregs: sigreg_loss = sigreg_weight * (sigreg(m_z_flat) + sigreg(mr
 is essetial.
 
 adding regular z to this sigreg didnt seem to help in anyway and may even have been less stable.
+
+on synthetic data, pixel masking actually seems to be much better, even than patch

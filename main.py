@@ -5,7 +5,7 @@ from tqdm.auto import tqdm
 
 from leae.autoencoder import Autoencoder
 from leae.logging import TrainingLogger
-from leae.masking import apply_mask, make_pixel_mask
+from leae.masking import apply_mask, make_patch_mask
 from leae.sigreg import SIGReg
 from leae.synth import make_synthetic
 
@@ -16,6 +16,7 @@ def main():
     metric_log_every = 10 # steps
     image_log_every = 100 # steps
     mask_ratio = 0.7
+    patch_size = 4
     sigreg_weight = 0.1
     image_size = 28
     log_dir = "logs"
@@ -56,7 +57,7 @@ def main():
             images = images.to(device, non_blocking=True)
             z = model.encode(images)
             recon = model.decode(z)
-            mask = make_pixel_mask(images, mask_ratio=mask_ratio)
+            mask = make_patch_mask(images, patch_size=patch_size, mask_ratio=mask_ratio)
             m_x = apply_mask(images, mask)
             mrec_x = apply_mask(recon, mask)
             m_z = model.encode(m_x)
@@ -99,7 +100,7 @@ def main():
                 images = images.to(device, non_blocking=True)
                 z = model.encode(images)
                 recon = model.decode(z)
-                mask = make_pixel_mask(images, mask_ratio=mask_ratio)
+                mask = make_patch_mask(images, patch_size=patch_size, mask_ratio=mask_ratio)
                 m_x = apply_mask(images, mask)
                 mrec_x = apply_mask(recon, mask)
                 m_z = model.encode(m_x)
