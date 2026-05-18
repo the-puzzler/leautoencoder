@@ -18,6 +18,12 @@ def apply_mask(images, mask):
     return images * mask
 
 
+def make_channel_mask(images, mask_ratio=0.7):
+    batch_size, channels, _, _ = images.shape
+    keep = (torch.rand(batch_size, channels, 1, 1, device=images.device) > mask_ratio).to(images.dtype)
+    return keep
+
+
 def make_patch_mask(images, patch_size=4, mask_ratio=0.7):
     batch_size, _, height, width = images.shape
 

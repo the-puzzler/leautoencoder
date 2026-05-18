@@ -1,32 +1,26 @@
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from leae.autoencoder import Autoencoder
 from leae.logging import TrainingLogger
-from leae.synth import make_synthetic
+from leae.prep_data import load_data
 
-ae = Autoencoder(in_channels=1, hidden_dim=32, latent_channels=16, output_size=28)
+ae = Autoencoder(in_channels=3, hidden_dim=64, latent_channels=32, output_size=32)
 
 
 def main():
     epochs = 10
     metric_log_every = 10  # steps
     image_log_every = 100  # steps
-    image_size = 28
     log_dir = "logs"
     num_log_images = 8
     learning_rate = 1e-3
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    all_images = make_synthetic(n=12000, size=image_size, seed=0)
-    train_dataset = TensorDataset(all_images[:10000], torch.zeros(10000))
-    test_dataset = TensorDataset(all_images[10000:], torch.zeros(2000))
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=0, pin_memory=device.type == "cuda")
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=0, pin_memory=device.type == "cuda")
+    train_loader, test_loader = load_data(batch_size=64, pin_memory=device.type == "cuda")
     model = ae.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(0, 1))
+    logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(-1, 1))
     train_bar = tqdm(total=epochs * len(train_loader), desc="train", leave=True)
     global_step = 0
 

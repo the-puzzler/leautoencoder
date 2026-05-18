@@ -1,37 +1,30 @@
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from leae.autoencoder import Autoencoder
 from leae.logging import TrainingLogger
-from leae.masking import apply_mask, make_patch_mask
+from leae.masking import apply_mask, make_pixel_mask
+from leae.prep_data import load_data
 from leae.sigreg import SIGReg
-from leae.synth import make_synthetic
 
-ae = Autoencoder(in_channels=1, hidden_dim=32, latent_channels=16, output_size=28)
+ae = Autoencoder(in_channels=3, hidden_dim=64, latent_channels=32, output_size=32)
 
 def main():
     epochs = 10
     metric_log_every = 10 # steps
     image_log_every = 100 # steps
-    mask_ratio = 0.7
-    patch_size = 4
+    mask_ratio = 0.3
     sigreg_weight = 0.1
-    image_size = 28
     log_dir = "logs"
     num_log_images = 8
     learning_rate = 1e-3
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    all_images = make_synthetic(n=12000, size=image_size, seed=0)
-    train_dataset = TensorDataset(all_images[:10000], torch.zeros(10000))
-    test_dataset = TensorDataset(all_images[10000:], torch.zeros(2000))
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=0, pin_memory=device.type == "cuda")
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=0, pin_memory=device.type == "cuda")
+    train_loader, test_loader = load_data(batch_size=64, pin_memory=device.type == "cuda")
     model = ae.to(device)
     sigreg = SIGReg().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(0, 1))
+    logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(-1, 1))
     train_bar = tqdm(total=epochs * len(train_loader), desc="train", leave=True)
     global_step = 0
 
@@ -57,16 +50,16 @@ def main():
             images = images.to(device, non_blocking=True)
             z = model.encode(images)
             recon = model.decode(z)
-            mask = make_patch_mask(images, patch_size=patch_size, mask_ratio=mask_ratio)
-            m_x = apply_mask(images, mask)
-            mrec_x = apply_mask(recon, mask)
-            m_z = model.encode(m_x)
-            mrec_z = model.encode(mrec_x)
-            z_flat = z.flatten(1)
-            m_z_flat = m_z.flatten(1)
-            mrec_z_flat = mrec_z.flatten(1)
-            mse_loss = F.mse_loss(m_z_flat, mrec_z_flat)
-            sigreg_loss = sigreg_weight * (sigreg(m_z_flat) + sigreg(mrec_z_flat))
+            pixel_mask = make_pixel_mask(images, mask_ratio=mask_ratio)
+            pixel_x = apply_mask(images, pixel_mask)
+            pixel_rec_x = apply_mask(recon, pixel_mask)
+            pixel_z = model.encode(pixel_x)
+            pixel_rec_z = model.encode(pixel_rec_x)
+
+            pixel_z_flat = pixel_z.flatten(1)
+            pixel_rec_z_flat = pixel_rec_z.flatten(1)
+            mse_loss = F.mse_loss(pixel_z_flat, pixel_rec_z_flat)
+            sigreg_loss = sigreg_weight * (sigreg(pixel_z_flat) + sigreg(pixel_rec_z_flat))
             loss = mse_loss + sigreg_loss
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -100,16 +93,16 @@ def main():
                 images = images.to(device, non_blocking=True)
                 z = model.encode(images)
                 recon = model.decode(z)
-                mask = make_patch_mask(images, patch_size=patch_size, mask_ratio=mask_ratio)
-                m_x = apply_mask(images, mask)
-                mrec_x = apply_mask(recon, mask)
-                m_z = model.encode(m_x)
-                mrec_z = model.encode(mrec_x)
-                z_flat = z.flatten(1)
-                m_z_flat = m_z.flatten(1)
-                mrec_z_flat = mrec_z.flatten(1)
-                mse_loss = F.mse_loss(m_z_flat, mrec_z_flat)
-                sigreg_loss = sigreg_weight * (sigreg(m_z_flat) + sigreg(mrec_z_flat))
+                pixel_mask = make_pixel_mask(images, mask_ratio=mask_ratio)
+                pixel_x = apply_mask(images, pixel_mask)
+                pixel_rec_x = apply_mask(recon, pixel_mask)
+                pixel_z = model.encode(pixel_x)
+                pixel_rec_z = model.encode(pixel_rec_x)
+
+                pixel_z_flat = pixel_z.flatten(1)
+                pixel_rec_z_flat = pixel_rec_z.flatten(1)
+                mse_loss = F.mse_loss(pixel_z_flat, pixel_rec_z_flat)
+                sigreg_loss = sigreg_weight * (sigreg(pixel_z_flat) + sigreg(pixel_rec_z_flat))
                 loss = mse_loss + sigreg_loss
                 test_loss += loss.item() * images.size(0)
                 test_mse += mse_loss.item() * images.size(0)
