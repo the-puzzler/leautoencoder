@@ -31,4 +31,4 @@ mse_loss = (
 this actually reintroduced the artifacts that were on channel masking mode alone. interesting. maybe the improbmenet were from compounded masking (0.7*0.7)?
 
 
-
+just did a 0.99 pixel mask run with the 656,131 model of the current commit, and the quality is excelent the problem is.... everything is snot coloured. i would say the detial is on par or better than the baseline recon except for colour.
