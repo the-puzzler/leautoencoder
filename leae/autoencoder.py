@@ -58,6 +58,7 @@ class ResidualUpBlock(nn.Module):
 class Autoencoder(nn.Module):
     def __init__(self, in_channels=3, hidden_dim=64, latent_channels=16, output_size=32):
         super().__init__()
+        assert latent_channels % 4 == 0 and (8 * hidden_dim) % latent_channels == 0 and (8 * hidden_dim) % (latent_channels // 4) == 0, "incompatible hidden_dim/latent_channels for residual skip paths"
         self.latent_channels = latent_channels
         self.latent_hw = 4
         self.output_size = output_size
@@ -80,11 +81,23 @@ class Autoencoder(nn.Module):
             nn.Sigmoid(),
         )
 
-    def encode(self, x):
+    def encode(self, x, update_latent_norm=True):
         z = self.encoder_features(self.stem(x))
         batch_size = z.size(0)
         z = z.flatten(1)
-        z = self.latent_norm(z)
+        if isinstance(self.latent_norm, nn.BatchNorm1d) and self.training and not update_latent_norm:
+            z = F.batch_norm(
+                z,
+                None,
+                None,
+                self.latent_norm.weight,
+                self.latent_norm.bias,
+                training=True,
+                momentum=0.0,
+                eps=self.latent_norm.eps,
+            )
+        else:
+            z = self.latent_norm(z)
         return z.view(batch_size, self.latent_channels, self.latent_hw, self.latent_hw)
 
     def decode(self, z):

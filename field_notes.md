@@ -32,3 +32,4 @@ this actually reintroduced the artifacts that were on channel masking mode alone
 
 
 
+crops are the way! they seem to fix all problems. see the math md explanation.

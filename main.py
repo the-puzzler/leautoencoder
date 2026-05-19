@@ -1,20 +1,35 @@
+from pathlib import Path
 import torch
 import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 from leae.autoencoder import Autoencoder
 from leae.logging import TrainingLogger
-from leae.masking import apply_mask, make_pixel_mask
+from leae.masking import apply_square_crop, sample_square_crop_boxes
 from leae.prep_data import load_data
 from leae.sigreg import SIGReg
 
-ae = Autoencoder(in_channels=3, hidden_dim=64, latent_channels=32, output_size=32)
+ae = Autoencoder(in_channels=3, hidden_dim=64, latent_channels=256, output_size=32)
+
+
+def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
+    checkpoint_path = Path(log_dir) / f"checkpoint_{percent}.pt"
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "epoch": epoch,
+            "global_step": global_step,
+            "percent": percent,
+        },
+        checkpoint_path,
+    )
 
 def main():
-    epochs = 10
+    epochs = 20
     metric_log_every = 10 # steps
     image_log_every = 100 # steps
-    mask_ratio = 0.3
+    crop_ratio = 0.1
     sigreg_weight = 0.1
     log_dir = "logs"
     num_log_images = 8
@@ -25,8 +40,16 @@ def main():
     sigreg = SIGReg().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(-1, 1))
+    run_dir = logger.log_dir
     train_bar = tqdm(total=epochs * len(train_loader), desc="train", leave=True)
+    total_steps = epochs * len(train_loader)
     global_step = 0
+    checkpoint_percents = [0, 20, 40, 60, 80, 100]
+    next_checkpoint_idx = 0
+
+    Path(run_dir).mkdir(parents=True, exist_ok=True)
+    save_checkpoint(model, optimizer, run_dir, checkpoint_percents[next_checkpoint_idx], epoch=0, global_step=0)
+    next_checkpoint_idx += 1
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -41,25 +64,25 @@ def main():
             x : image
             enc(x) --> z
             dec(z) --> rec_x
-            mask(rec_x) --> mrec_x
-            mask(x) --> m_x
-            enc(mrec_x) --> mrec_z
-            enc(m_x) --> m_z
-            Loss = mse(m_z, mrec_z) + sigreg(z, mrec_z, m_z)
+            crop(rec_x) --> crec_x
+            crop(x) --> c_x
+            enc(crec_x) --> crec_z
+            enc(c_x) --> c_z
+            Loss = mse(c_z, crec_z) + sigreg(z, crec_z, c_z)
             """
             images = images.to(device, non_blocking=True)
             z = model.encode(images)
             recon = model.decode(z)
-            pixel_mask = make_pixel_mask(images, mask_ratio=mask_ratio)
-            pixel_x = apply_mask(images, pixel_mask)
-            pixel_rec_x = apply_mask(recon, pixel_mask)
-            pixel_z = model.encode(pixel_x)
-            pixel_rec_z = model.encode(pixel_rec_x)
+            top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
+            crop_x = apply_square_crop(images, top, left, crop_size)
+            crop_rec_x = apply_square_crop(recon, top, left, crop_size)
+            crop_z = model.encode(crop_x, update_latent_norm=False)
+            crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False)
 
-            pixel_z_flat = pixel_z.flatten(1)
-            pixel_rec_z_flat = pixel_rec_z.flatten(1)
-            mse_loss = F.mse_loss(pixel_z_flat, pixel_rec_z_flat)
-            sigreg_loss = sigreg_weight * (sigreg(pixel_z_flat) + sigreg(pixel_rec_z_flat))
+            crop_z_flat = crop_z.flatten(1)
+            crop_rec_z_flat = crop_rec_z.flatten(1)
+            mse_loss = F.mse_loss(crop_z_flat, crop_rec_z_flat)
+            sigreg_loss = sigreg_weight * (sigreg(crop_z_flat) + sigreg(crop_rec_z_flat))
             loss = mse_loss + sigreg_loss
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -70,6 +93,20 @@ def main():
             train_sigreg += sigreg_loss.item() * images.size(0)
             train_count += images.size(0)
             train_bar.update()
+
+            while (
+                next_checkpoint_idx < len(checkpoint_percents)
+                and global_step * 100 >= checkpoint_percents[next_checkpoint_idx] * total_steps
+            ):
+                save_checkpoint(
+                    model,
+                    optimizer,
+                    run_dir,
+                    checkpoint_percents[next_checkpoint_idx],
+                    epoch=epoch,
+                    global_step=global_step,
+                )
+                next_checkpoint_idx += 1
 
             image_path = ""
             if global_step % image_log_every == 0:
@@ -93,16 +130,16 @@ def main():
                 images = images.to(device, non_blocking=True)
                 z = model.encode(images)
                 recon = model.decode(z)
-                pixel_mask = make_pixel_mask(images, mask_ratio=mask_ratio)
-                pixel_x = apply_mask(images, pixel_mask)
-                pixel_rec_x = apply_mask(recon, pixel_mask)
-                pixel_z = model.encode(pixel_x)
-                pixel_rec_z = model.encode(pixel_rec_x)
+                top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
+                crop_x = apply_square_crop(images, top, left, crop_size)
+                crop_rec_x = apply_square_crop(recon, top, left, crop_size)
+                crop_z = model.encode(crop_x)
+                crop_rec_z = model.encode(crop_rec_x)
 
-                pixel_z_flat = pixel_z.flatten(1)
-                pixel_rec_z_flat = pixel_rec_z.flatten(1)
-                mse_loss = F.mse_loss(pixel_z_flat, pixel_rec_z_flat)
-                sigreg_loss = sigreg_weight * (sigreg(pixel_z_flat) + sigreg(pixel_rec_z_flat))
+                crop_z_flat = crop_z.flatten(1)
+                crop_rec_z_flat = crop_rec_z.flatten(1)
+                mse_loss = F.mse_loss(crop_z_flat, crop_rec_z_flat)
+                sigreg_loss = sigreg_weight * (sigreg(crop_z_flat) + sigreg(crop_rec_z_flat))
                 loss = mse_loss + sigreg_loss
                 test_loss += loss.item() * images.size(0)
                 test_mse += mse_loss.item() * images.size(0)
