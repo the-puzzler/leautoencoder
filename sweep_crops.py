@@ -80,8 +80,8 @@ def compute_crop_losses(model, sigreg, images, recon, variant, sigreg_weight):
         top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
         crop_x = apply_square_crop(images, top, left, crop_size)
         crop_rec_x = apply_square_crop(recon, top, left, crop_size)
-        crop_z = model.encode(crop_x).flatten(1)
-        crop_rec_z = model.encode(crop_rec_x).flatten(1)
+        crop_z = model.encode(crop_x, update_latent_norm=False).flatten(1)
+        crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False).flatten(1)
         mse_losses.append(F.mse_loss(crop_z, crop_rec_z))
         sigreg_losses.append(sigreg(crop_z) + sigreg(crop_rec_z))
 

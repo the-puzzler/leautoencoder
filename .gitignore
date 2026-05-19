@@ -18,3 +18,5 @@ data/
 
 # Training artifacts
 logs/
+
+diagnostics/

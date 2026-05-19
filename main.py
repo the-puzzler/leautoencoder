@@ -133,8 +133,8 @@ def main():
                 top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
                 crop_x = apply_square_crop(images, top, left, crop_size)
                 crop_rec_x = apply_square_crop(recon, top, left, crop_size)
-                crop_z = model.encode(crop_x)
-                crop_rec_z = model.encode(crop_rec_x)
+                crop_z = model.encode(crop_x, update_latent_norm=False)
+                crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False)
 
                 crop_z_flat = crop_z.flatten(1)
                 crop_rec_z_flat = crop_rec_z.flatten(1)

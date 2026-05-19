@@ -78,7 +78,7 @@ class Autoencoder(nn.Module):
         )
         self.head = nn.Sequential(
             nn.ConvTranspose2d(hidden_dim, in_channels, kernel_size=4, stride=2, padding=1),
-            nn.Sigmoid(),
+            nn.Tanh(),
         )
 
     def encode(self, x, update_latent_norm=True):
