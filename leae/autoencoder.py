@@ -85,7 +85,7 @@ class Autoencoder(nn.Module):
         z = self.encoder_features(self.stem(x))
         batch_size = z.size(0)
         z = z.flatten(1)
-        if isinstance(self.latent_norm, nn.BatchNorm1d) and self.training and not update_latent_norm:
+        if isinstance(self.latent_norm, nn.BatchNorm1d) and not update_latent_norm:
             z = F.batch_norm(
                 z,
                 None,
