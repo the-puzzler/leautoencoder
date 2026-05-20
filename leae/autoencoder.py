@@ -36,20 +36,18 @@ class ResidualDownBlock(nn.Module):
 class ResidualUpBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.out_channels = out_channels
+        self.skip_proj = nn.Conv2d(in_channels, out_channels, kernel_size=1)
         self.block = nn.Sequential(
-            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1),
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
             nn.SiLU(),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
         )
         self.act = nn.SiLU()
 
     def skip(self, x):
-        x = F.pixel_shuffle(x, upscale_factor=2)
-        channels = x.size(1)
-        if self.out_channels % channels != 0:
-            raise ValueError(f"cannot duplicate {channels} channels into {self.out_channels}")
-        return x.repeat(1, self.out_channels // channels, 1, 1)
+        x = F.interpolate(x, scale_factor=2, mode="nearest")
+        return self.skip_proj(x)
 
     def forward(self, x):
         return self.act(self.skip(x) + self.block(x))
@@ -77,8 +75,9 @@ class Autoencoder(nn.Module):
             ResidualUpBlock(hidden_dim * 2, hidden_dim),
         )
         self.head = nn.Sequential(
-            nn.ConvTranspose2d(hidden_dim, in_channels, kernel_size=4, stride=2, padding=1),
-            nn.Tanh(),
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            nn.Conv2d(hidden_dim, in_channels, kernel_size=3, padding=1),
+            nn.Sigmoid(),
         )
 
     def encode(self, x, update_latent_norm=True):

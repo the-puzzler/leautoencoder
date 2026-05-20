@@ -9,7 +9,7 @@ from leae.masking import apply_square_crop, sample_square_crop_boxes
 from leae.prep_data import load_data
 from leae.sigreg import SIGReg
 
-ae = Autoencoder(in_channels=3, hidden_dim=64, latent_channels=256, output_size=32)
+ae = Autoencoder(in_channels=3, hidden_dim=64, latent_channels=8, output_size=32)
 
 
 def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
@@ -29,7 +29,7 @@ def main():
     epochs = 20
     metric_log_every = 10 # steps
     image_log_every = 100 # steps
-    crop_ratio = 0.1
+    crop_ratio = 0.3
     sigreg_weight = 0.1
     log_dir = "logs"
     num_log_images = 8
@@ -39,7 +39,7 @@ def main():
     model = ae.to(device)
     sigreg = SIGReg().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(-1, 1))
+    logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(0, 1))
     run_dir = logger.log_dir
     train_bar = tqdm(total=epochs * len(train_loader), desc="train", leave=True)
     total_steps = epochs * len(train_loader)
@@ -76,13 +76,10 @@ def main():
             top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
             crop_x = apply_square_crop(images, top, left, crop_size)
             crop_rec_x = apply_square_crop(recon, top, left, crop_size)
-            crop_z = model.encode(crop_x, update_latent_norm=False)
-            crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False)
-
-            crop_z_flat = crop_z.flatten(1)
-            crop_rec_z_flat = crop_rec_z.flatten(1)
-            mse_loss = F.mse_loss(crop_z_flat, crop_rec_z_flat)
-            sigreg_loss = sigreg_weight * (sigreg(crop_z_flat) + sigreg(crop_rec_z_flat))
+            crop_z = model.encode(crop_x, update_latent_norm=False).flatten(1)
+            crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False).flatten(1)
+            mse_loss = F.mse_loss(crop_z, crop_rec_z)
+            sigreg_loss = sigreg_weight * (sigreg(crop_z) + sigreg(crop_rec_z))
             loss = mse_loss + sigreg_loss
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -133,13 +130,10 @@ def main():
                 top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
                 crop_x = apply_square_crop(images, top, left, crop_size)
                 crop_rec_x = apply_square_crop(recon, top, left, crop_size)
-                crop_z = model.encode(crop_x, update_latent_norm=False)
-                crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False)
-
-                crop_z_flat = crop_z.flatten(1)
-                crop_rec_z_flat = crop_rec_z.flatten(1)
-                mse_loss = F.mse_loss(crop_z_flat, crop_rec_z_flat)
-                sigreg_loss = sigreg_weight * (sigreg(crop_z_flat) + sigreg(crop_rec_z_flat))
+                crop_z = model.encode(crop_x, update_latent_norm=False).flatten(1)
+                crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False).flatten(1)
+                mse_loss = F.mse_loss(crop_z, crop_rec_z)
+                sigreg_loss = sigreg_weight * (sigreg(crop_z) + sigreg(crop_rec_z))
                 loss = mse_loss + sigreg_loss
                 test_loss += loss.item() * images.size(0)
                 test_mse += mse_loss.item() * images.size(0)
