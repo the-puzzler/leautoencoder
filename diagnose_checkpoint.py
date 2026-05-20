@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from leae.autoencoder import Autoencoder
 from leae.masking import apply_square_crop, sample_square_crop_boxes
 from leae.prep_data import load_data
-from leae.sigreg import SIGReg
+from leae.sigreg import SIGReg, latent_to_sigreg_samples
 
 
 def make_model():
@@ -31,10 +31,10 @@ def compute_crop_objective(model, sigreg, images, crop_ratio, sigreg_weight):
     crop_rec_x = apply_square_crop(recon, top, left, crop_size)
     crop_z = model.encode(crop_x)
     crop_rec_z = model.encode(crop_rec_x)
-    crop_z_flat = crop_z.flatten(1)
-    crop_rec_z_flat = crop_rec_z.flatten(1)
-    mse_loss = F.mse_loss(crop_z_flat, crop_rec_z_flat)
-    sigreg_loss = sigreg_weight * (sigreg(crop_z_flat) + sigreg(crop_rec_z_flat))
+    mse_loss = F.mse_loss(crop_z, crop_rec_z)
+    sigreg_loss = sigreg_weight * (
+        sigreg(latent_to_sigreg_samples(crop_z)) + sigreg(latent_to_sigreg_samples(crop_rec_z))
+    )
     loss = mse_loss + sigreg_loss
     return {
         "loss": loss,

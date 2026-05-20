@@ -69,7 +69,7 @@ class Autoencoder(nn.Module):
             ResidualDownBlock(hidden_dim * 2, latent_channels, stride=2),
         )
         self.flat_latent_dim = latent_channels * self.latent_hw * self.latent_hw
-        self.latent_norm = nn.BatchNorm1d(self.flat_latent_dim)
+        self.latent_norm = nn.BatchNorm1d(self.latent_channels)
         self.decoder = nn.Sequential(
             ResidualUpBlock(latent_channels, hidden_dim * 2),
             ResidualUpBlock(hidden_dim * 2, hidden_dim),
@@ -83,7 +83,7 @@ class Autoencoder(nn.Module):
     def encode(self, x, update_latent_norm=True):
         z = self.encoder_features(self.stem(x))
         batch_size = z.size(0)
-        z = z.flatten(1)
+        z = z.view(batch_size, self.latent_channels, -1)
         if isinstance(self.latent_norm, nn.BatchNorm1d) and not update_latent_norm:
             z = F.batch_norm(
                 z,

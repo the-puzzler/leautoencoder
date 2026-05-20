@@ -1,6 +1,13 @@
 import torch
 
 
+def latent_to_sigreg_samples(latent):
+    if latent.ndim != 4:
+        raise ValueError(f"expected latent with shape [batch, channels, height, width], got {tuple(latent.shape)}")
+    batch_size, channels, height, width = latent.shape
+    return latent.permute(2, 3, 0, 1).reshape(height * width, batch_size, channels)
+
+
 class SIGReg(torch.nn.Module):
     def __init__(self, knots=17):
         super().__init__()
@@ -18,6 +25,8 @@ class SIGReg(torch.nn.Module):
             proj = projs[0]
         else:
             proj = torch.stack(projs, dim=1)
+        if proj.ndim not in {2, 3}:
+            raise ValueError(f"expected projection tensor with 2 or 3 dims, got shape {tuple(proj.shape)}")
 
         A = torch.randn(proj.size(-1), 256, device=proj.device, dtype=proj.dtype)
         A = A.div_(A.norm(p=2, dim=0))
