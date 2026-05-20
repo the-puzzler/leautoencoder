@@ -9,7 +9,7 @@ from leae.masking import apply_square_crop, sample_square_crop_boxes
 from leae.prep_data import load_data
 from leae.sigreg import SIGReg, latent_to_sigreg_samples
 
-ae = Autoencoder(in_channels=3, hidden_dim=256, latent_channels=8, output_size=32)
+ae = Autoencoder(in_channels=3, hidden_dim=64, latent_channels=8, output_size=32)
 
 
 def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
