@@ -45,3 +45,5 @@ The batch norm fix was that the crop arms should not contribute to batch norm (c
 
 
 just realised that data is normed to -1 -> 1 yet model output was constrained 0-1.... idiot.
+
+lr needs to be 1e-4, 1e-3 wth large conv model was unstable
