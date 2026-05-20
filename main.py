@@ -26,16 +26,16 @@ def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
     )
 
 def main():
-    epochs = 20
+    epochs = 10
     metric_log_every = 10 # steps
-    image_log_every = 100 # steps
-    crop_ratio = 0.3
-    sigreg_weight = 0.1
+    image_log_every = 500 # steps
+    crop_ratio = 0.05
+    sigreg_weight = 0.03
     log_dir = "logs"
     num_log_images = 8
     learning_rate = 1e-3
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train_loader, test_loader = load_data(batch_size=64, pin_memory=device.type == "cuda")
+    train_loader, test_loader = load_data(batch_size=128, pin_memory=device.type == "cuda")
     model = ae.to(device)
     sigreg = SIGReg().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)

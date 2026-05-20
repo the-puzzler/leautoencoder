@@ -41,5 +41,7 @@ crops are the way! they seem to fix all problems. see the math md explanation.
 
 seems like batchnorm causes some instability later in training. probably becuase it was also being updated on crop branches, so removing that and testing again, should hopefully bring test in line with train.
 
+The batch norm fix was that the crop arms should not contribute to batch norm (crops afterall are not totally on distrubution and mess up stats.)
+
 
 just realised that data is normed to -1 -> 1 yet model output was constrained 0-1.... idiot.
