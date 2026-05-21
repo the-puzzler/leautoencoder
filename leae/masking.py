@@ -57,9 +57,30 @@ def sample_square_crop_boxes(images, crop_ratio=0.5):
 
 
 def apply_square_crop(images, top, left, crop_size):
-    crops = [
-        images[i : i + 1, :, top[i].item() : top[i].item() + crop_size, left[i].item() : left[i].item() + crop_size]
-        for i in range(images.size(0))
-    ]
-    crops = torch.cat(crops, dim=0)
-    return F.interpolate(crops, size=images.shape[-2:], mode="bilinear", align_corners=False)
+    batch_size, _, height, width = images.shape
+    device = images.device
+    dtype = images.dtype
+
+    if crop_size <= 0:
+        raise ValueError(f"crop_size must be positive, got {crop_size}")
+
+    ys = torch.linspace(0, crop_size - 1, height, device=device, dtype=dtype)
+    xs = torch.linspace(0, crop_size - 1, width, device=device, dtype=dtype)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+
+    top = top.to(device=device, dtype=dtype).view(batch_size, 1, 1)
+    left = left.to(device=device, dtype=dtype).view(batch_size, 1, 1)
+    sample_y = top + grid_y.unsqueeze(0)
+    sample_x = left + grid_x.unsqueeze(0)
+
+    if height > 1:
+        sample_y = (sample_y / (height - 1)) * 2 - 1
+    else:
+        sample_y = torch.zeros_like(sample_y)
+    if width > 1:
+        sample_x = (sample_x / (width - 1)) * 2 - 1
+    else:
+        sample_x = torch.zeros_like(sample_x)
+
+    grid = torch.stack((sample_x, sample_y), dim=-1)
+    return F.grid_sample(images, grid, mode="bilinear", padding_mode="border", align_corners=True)

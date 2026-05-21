@@ -29,6 +29,7 @@ def main():
     epochs = 10
     metric_log_every = 10 # steps
     image_log_every = 500 # steps
+    test_every = 2000 # steps
     crop_ratio = 0.05
     sigreg_weight = 0.03
     log_dir = "logs"
@@ -50,6 +51,56 @@ def main():
     Path(run_dir).mkdir(parents=True, exist_ok=True)
     save_checkpoint(model, optimizer, run_dir, checkpoint_percents[next_checkpoint_idx], epoch=0, global_step=0)
     next_checkpoint_idx += 1
+
+    def run_test(epoch, global_step):
+        model.eval()
+        test_loss = 0.0
+        test_mse = 0.0
+        test_sigreg = 0.0
+        test_count = 0
+        test_images = None
+        test_recon = None
+
+        with torch.no_grad():
+            for images, _ in tqdm(test_loader, desc=f"test  {epoch:02d}", leave=False):
+                images = images.to(device, non_blocking=True)
+                z = model.encode(images)
+                recon = model.decode(z)
+                top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
+                crop_x = apply_square_crop(images, top, left, crop_size)
+                crop_rec_x = apply_square_crop(recon, top, left, crop_size)
+                crop_z = model.encode(crop_x, update_latent_norm=False)
+                crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False)
+                mse_loss = F.mse_loss(crop_z, crop_rec_z)
+                sigreg_loss = sigreg_weight * (
+                    sigreg(latent_to_sigreg_samples(crop_z)) + sigreg(latent_to_sigreg_samples(crop_rec_z))
+                )
+                loss = mse_loss + sigreg_loss
+                test_loss += loss.item() * images.size(0)
+                test_mse += mse_loss.item() * images.size(0)
+                test_sigreg += sigreg_loss.item() * images.size(0)
+                test_count += images.size(0)
+                test_images = images
+                test_recon = recon
+
+        test_image_path = logger.log_images("test", epoch, global_step, test_images, test_recon)
+        logger.log_metrics(
+            "test",
+            epoch,
+            global_step,
+            test_loss / test_count,
+            test_mse / test_count,
+            test_sigreg / test_count,
+            image_path=test_image_path,
+        )
+        logger.plot_metrics()
+        print(
+            f"test  step={global_step:06d} "
+            f"loss={test_loss / test_count:.4f} "
+            f"mse={test_mse / test_count:.4f} "
+            f"sigreg={test_sigreg / test_count:.4f}"
+        )
+        model.train()
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -116,57 +167,18 @@ def main():
                 if image_path:
                     logger.plot_metrics()
 
-        model.eval()
-        test_loss = 0.0
-        test_mse = 0.0
-        test_sigreg = 0.0
-        test_count = 0
-        test_images = None
-        test_recon = None
-
-        with torch.no_grad():
-            for images, _ in tqdm(test_loader, desc=f"test  {epoch:02d}", leave=False):
-                images = images.to(device, non_blocking=True)
-                z = model.encode(images)
-                recon = model.decode(z)
-                top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
-                crop_x = apply_square_crop(images, top, left, crop_size)
-                crop_rec_x = apply_square_crop(recon, top, left, crop_size)
-                crop_z = model.encode(crop_x, update_latent_norm=False)
-                crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False)
-                mse_loss = F.mse_loss(crop_z, crop_rec_z)
-                sigreg_loss = sigreg_weight * (
-                    sigreg(latent_to_sigreg_samples(crop_z)) + sigreg(latent_to_sigreg_samples(crop_rec_z))
-                )
-                loss = mse_loss + sigreg_loss
-                test_loss += loss.item() * images.size(0)
-                test_mse += mse_loss.item() * images.size(0)
-                test_sigreg += sigreg_loss.item() * images.size(0)
-                test_count += images.size(0)
-                test_images = images
-                test_recon = recon
-
-        test_image_path = logger.log_images("test", epoch, global_step, test_images, test_recon)
-        logger.log_metrics(
-            "test",
-            epoch,
-            global_step,
-            test_loss / test_count,
-            test_mse / test_count,
-            test_sigreg / test_count,
-            image_path=test_image_path,
-        )
-        logger.plot_metrics()
+            if global_step % test_every == 0:
+                run_test(epoch, global_step)
 
         print(
             f"epoch {epoch:02d} "
             f"train_loss={train_loss / train_count:.4f} "
             f"train_mse={train_mse / train_count:.4f} "
             f"train_sigreg={train_sigreg / train_count:.4f} "
-            f"test_loss={test_loss / test_count:.4f} "
-            f"test_mse={test_mse / test_count:.4f} "
-            f"test_sigreg={test_sigreg / test_count:.4f}"
         )
+
+    if global_step % test_every != 0:
+        run_test(epochs, global_step)
 
     train_bar.close()
 
