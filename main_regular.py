@@ -12,7 +12,7 @@ ae = Autoencoder(in_channels=3, hidden_dim=64, latent_channels=32, output_size=3
 def main():
     epochs = 10
     metric_log_every = 10  # steps
-    image_log_every = 100  # steps
+    image_log_every = 1000  # steps
     log_dir = "logs"
     num_log_images = 8
     learning_rate = 1e-3
@@ -20,7 +20,7 @@ def main():
     train_loader, test_loader = load_data(batch_size=64, pin_memory=device.type == "cuda")
     model = ae.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(-1, 1))
+    logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(0, 1))
     train_bar = tqdm(total=epochs * len(train_loader), desc="train", leave=True)
     global_step = 0
 

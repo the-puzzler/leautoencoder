@@ -9,7 +9,7 @@ from leae.masking import apply_square_crop, sample_square_crop_boxes
 from leae.prep_data import load_data
 from leae.sigreg import SIGReg, latent_to_sigreg_samples
 
-ae = Autoencoder(in_channels=3, hidden_dim=64, latent_channels=8, output_size=32)
+ae = Autoencoder(in_channels=3, hidden_dim=128, latent_channels=32, output_size=128)
 
 
 def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
@@ -26,17 +26,17 @@ def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
     )
 
 def main():
-    epochs = 10
+    epochs = 50
     metric_log_every = 10 # steps
     image_log_every = 500 # steps
     test_every = 2000 # steps
-    crop_ratio = 0.05
+    crop_ratio = 0.15
     sigreg_weight = 0.03
     log_dir = "logs"
     num_log_images = 8
     learning_rate = 1e-4
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train_loader, test_loader = load_data(batch_size=128, pin_memory=device.type == "cuda")
+    train_loader, test_loader = load_data(batch_size=128, pin_memory=device.type == "cuda", dataset_name="celeba")
     model = ae.to(device)
     sigreg = SIGReg().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
@@ -115,11 +115,11 @@ def main():
             x : image
             enc(x) --> z
             dec(z) --> rec_x
-            crop(rec_x) --> crec_x
             crop(x) --> c_x
-            enc(crec_x) --> crec_z
+            crop(rec_x) --> crec_x
             enc(c_x) --> c_z
-            Loss = mse(c_z, crec_z) + sigreg(z, crec_z, c_z)
+            enc(crec_x) --> crec_z
+            Loss = mse(c_z, crec_z) + sigreg(c_z, crec_z)
             """
             images = images.to(device, non_blocking=True)
             z = model.encode(images)

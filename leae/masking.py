@@ -19,6 +19,16 @@ def apply_mask(images, mask):
     return images * mask
 
 
+def fill_mask_with_image_average(images, mask):
+    mask = mask.to(device=images.device, dtype=images.dtype)
+    if mask.shape != images.shape[:1] + (1,) + images.shape[2:]:
+        raise ValueError(
+            f"expected mask shape {(images.size(0), 1, images.size(2), images.size(3))}, got {tuple(mask.shape)}"
+        )
+    image_average = images.mean(dim=(-2, -1), keepdim=True)
+    return images * mask + image_average * (1.0 - mask)
+
+
 def make_channel_mask(images, mask_ratio=0.7):
     batch_size, channels, _, _ = images.shape
     keep = (torch.rand(batch_size, channels, 1, 1, device=images.device) > mask_ratio).to(images.dtype)
@@ -84,3 +94,23 @@ def apply_square_crop(images, top, left, crop_size):
 
     grid = torch.stack((sample_x, sample_y), dim=-1)
     return F.grid_sample(images, grid, mode="bilinear", padding_mode="border", align_corners=True)
+
+
+def apply_square_crop_raw(images, top, left, crop_size):
+    batch_size, _, height, width = images.shape
+    device = images.device
+
+    if crop_size <= 0:
+        raise ValueError(f"crop_size must be positive, got {crop_size}")
+    if crop_size > height or crop_size > width:
+        raise ValueError(f"crop_size {crop_size} exceeds image size {(height, width)}")
+
+    top = top.to(device=device, dtype=torch.long)
+    left = left.to(device=device, dtype=torch.long)
+    offsets = torch.arange(crop_size, device=device)
+    y_idx = top[:, None] + offsets[None, :]
+    x_idx = left[:, None] + offsets[None, :]
+    gather_y = y_idx[:, None, :, None].expand(-1, images.size(1), -1, width)
+    cropped = torch.gather(images, dim=2, index=gather_y)
+    gather_x = x_idx[:, None, None, :].expand(-1, images.size(1), crop_size, -1)
+    return torch.gather(cropped, dim=3, index=gather_x)

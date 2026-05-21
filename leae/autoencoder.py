@@ -82,7 +82,7 @@ class Autoencoder(nn.Module):
 
     def encode(self, x, update_latent_norm=True):
         z = self.encoder_features(self.stem(x))
-        batch_size = z.size(0)
+        batch_size, _, latent_h, latent_w = z.shape
         z = z.view(batch_size, self.latent_channels, -1)
         if isinstance(self.latent_norm, nn.BatchNorm1d) and not update_latent_norm:
             z = F.batch_norm(
@@ -97,7 +97,7 @@ class Autoencoder(nn.Module):
             )
         else:
             z = self.latent_norm(z)
-        return z.view(batch_size, self.latent_channels, self.latent_hw, self.latent_hw)
+        return z.view(batch_size, self.latent_channels, latent_h, latent_w)
 
     def decode(self, z):
         x = self.head(self.decoder(z))
