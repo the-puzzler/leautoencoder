@@ -6,6 +6,13 @@ from tqdm.auto import tqdm
 
 from leae.autoencoder import Autoencoder
 from leae.logging import TrainingLogger
+from leae.masking import (
+    apply_heavy_blur,
+    apply_high_pass_filter,
+    apply_local_contrast_normalization,
+    apply_saturation_contrast_boost,
+    apply_sobel_edges,
+)
 from leae.prep_data import load_data
 from leae.sigreg import SIGReg, latent_to_sigreg_samples
 
@@ -33,6 +40,7 @@ def main():
     test_every = 2000 # steps
     ema_decay = 0.999
     sigreg_weight = 0.03
+    plain_view_weight = 1.0
     log_dir = "logs"
     num_log_images = 8
     learning_rate = 1e-4
@@ -56,6 +64,15 @@ def main():
     Path(run_dir).mkdir(parents=True, exist_ok=True)
     save_checkpoint(model, enc_ema, optimizer, run_dir, checkpoint_percents[next_checkpoint_idx], epoch=0, global_step=0)
     next_checkpoint_idx += 1
+
+    def transformed_views(images):
+        return [
+            apply_heavy_blur(images),
+            apply_saturation_contrast_boost(images),
+            apply_sobel_edges(images),
+            apply_high_pass_filter(images),
+            apply_local_contrast_normalization(images),
+        ]
 
     def update_encoder_ema():
         for ema_param, param in zip(enc_ema.stem.parameters(), model.stem.parameters()):
@@ -84,9 +101,18 @@ def main():
             with torch.no_grad():
                 z = model.encode(images)
                 recon = model.decode(z)
+                target_views = transformed_views(images)
+                recon_views = transformed_views(recon)
+                transformed_mse = 0.0
+                for target_view, recon_view in zip(target_views, recon_views):
+                    target_z = enc_ema.encode(target_view, update_latent_norm=False).detach()
+                    recon_z = enc_ema.encode(recon_view, update_latent_norm=False)
+                    transformed_mse = transformed_mse + F.mse_loss(target_z, recon_z)
+                transformed_mse = transformed_mse / len(target_views)
                 target_z = enc_ema.encode(images, update_latent_norm=False).detach()
                 recon_z = enc_ema.encode(recon, update_latent_norm=False)
-                mse_loss = F.mse_loss(target_z, recon_z)
+                plain_mse = F.mse_loss(target_z, recon_z)
+                mse_loss = (transformed_mse + plain_view_weight * plain_mse) / (1.0 + plain_view_weight)
             sigreg_loss = sigreg_weight * sigreg(latent_to_sigreg_samples(z))
             loss = mse_loss + sigreg_loss
             test_loss += loss.item() * images.size(0)
@@ -128,17 +154,31 @@ def main():
             x : image
             enc(x) --> z
             dec(z) --> rec_x
-            enc_ema(x) --> t_z
-            enc_ema(rec_x) --> trec_z
-            Loss = mse(t_z, trec_z) + sigreg
+            for multiple detail transforms:
+            T(x) --> t_x
+            T(rec_x) --> trec_x
+            enc_ema(t_x) --> t_z
+            enc_ema(trec_x) --> trec_z
+            also compare clean full views with enc_ema
+            Loss = avg(mse detail bundle, mse plain) + sigreg
             """
             images = images.to(device, non_blocking=True)
             z = model.encode(images)
             recon = model.decode(z)
+            target_views = transformed_views(images)
+            recon_views = transformed_views(recon)
+            transformed_mse = 0.0
+            for target_view, recon_view in zip(target_views, recon_views):
+                with torch.no_grad():
+                    target_z = enc_ema.encode(target_view, update_latent_norm=False).detach()
+                recon_z = enc_ema.encode(recon_view, update_latent_norm=False)
+                transformed_mse = transformed_mse + F.mse_loss(target_z, recon_z)
+            transformed_mse = transformed_mse / len(target_views)
             with torch.no_grad():
                 target_z = enc_ema.encode(images, update_latent_norm=False).detach()
             recon_z = enc_ema.encode(recon, update_latent_norm=False)
-            mse_loss = F.mse_loss(target_z, recon_z)
+            plain_mse = F.mse_loss(target_z, recon_z)
+            mse_loss = (transformed_mse + plain_view_weight * plain_mse) / (1.0 + plain_view_weight)
             sigreg_loss = sigreg_weight * sigreg(latent_to_sigreg_samples(z))
             loss = mse_loss + sigreg_loss
             optimizer.zero_grad(set_to_none=True)
