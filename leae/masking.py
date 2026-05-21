@@ -19,6 +19,75 @@ def apply_mask(images, mask):
     return images * mask
 
 
+def apply_box_blur(images, kernel_size=5):
+    if kernel_size <= 0 or kernel_size % 2 == 0:
+        raise ValueError(f"kernel_size must be a positive odd integer, got {kernel_size}")
+    channels = images.size(1)
+    kernel = torch.full(
+        (channels, 1, kernel_size, kernel_size),
+        1.0 / (kernel_size * kernel_size),
+        device=images.device,
+        dtype=images.dtype,
+    )
+    padding = kernel_size // 2
+    return F.conv2d(images, kernel, padding=padding, groups=channels)
+
+
+def apply_saturation_contrast_boost(images, saturation=1.8, contrast=1.4):
+    gray = images.mean(dim=1, keepdim=True)
+    saturated = gray + saturation * (images - gray)
+    mean = saturated.mean(dim=(-2, -1), keepdim=True)
+    contrasted = mean + contrast * (saturated - mean)
+    return contrasted.clamp(0.0, 1.0)
+
+
+def apply_unsharp_mask(images, blur_kernel_size=5, amount=1.0):
+    blurred = apply_box_blur(images, kernel_size=blur_kernel_size)
+    sharpened = images + amount * (images - blurred)
+    return sharpened.clamp(0.0, 1.0)
+
+
+def apply_sobel_edges(images):
+    gray = images.mean(dim=1, keepdim=True)
+    kernel_x = torch.tensor(
+        [[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]],
+        device=images.device,
+        dtype=images.dtype,
+    ).view(1, 1, 3, 3)
+    kernel_y = torch.tensor(
+        [[-1.0, -2.0, -1.0], [0.0, 0.0, 0.0], [1.0, 2.0, 1.0]],
+        device=images.device,
+        dtype=images.dtype,
+    ).view(1, 1, 3, 3)
+    grad_x = F.conv2d(gray, kernel_x, padding=1)
+    grad_y = F.conv2d(gray, kernel_y, padding=1)
+    magnitude = torch.sqrt(grad_x.square() + grad_y.square() + 1e-6)
+    magnitude = magnitude / magnitude.amax(dim=(-2, -1), keepdim=True).clamp_min(1e-6)
+    return magnitude.repeat(1, images.size(1), 1, 1).clamp(0.0, 1.0)
+
+
+def apply_high_pass_filter(images, blur_kernel_size=5):
+    blurred = apply_box_blur(images, kernel_size=blur_kernel_size)
+    high_pass = (images - blurred).abs()
+    high_pass = high_pass / high_pass.amax(dim=(-2, -1), keepdim=True).clamp_min(1e-6)
+    return high_pass.clamp(0.0, 1.0)
+
+
+def apply_local_contrast_normalization(images, blur_kernel_size=5, eps=1e-4):
+    gray = images.mean(dim=1, keepdim=True)
+    local_mean = apply_box_blur(gray, kernel_size=blur_kernel_size)
+    centered = gray - local_mean
+    local_var = apply_box_blur(centered.square(), kernel_size=blur_kernel_size)
+    normalized = centered / (local_var + eps).sqrt()
+    normalized = normalized / normalized.abs().amax(dim=(-2, -1), keepdim=True).clamp_min(1e-6)
+    normalized = 0.5 * (normalized + 1.0)
+    return normalized.repeat(1, images.size(1), 1, 1).clamp(0.0, 1.0)
+
+
+def apply_heavy_blur(images, kernel_size=11):
+    return apply_box_blur(images, kernel_size=kernel_size).clamp(0.0, 1.0)
+
+
 def fill_mask_with_image_average(images, mask):
     mask = mask.to(device=images.device, dtype=images.dtype)
     if mask.shape != images.shape[:1] + (1,) + images.shape[2:]:
@@ -46,10 +115,10 @@ def make_patch_mask(images, patch_size=4, mask_ratio=0.7):
     num_patches = patches_h * patches_w
     num_masked = int(num_patches * mask_ratio)
     patch_mask = torch.ones(batch_size, num_patches, device=images.device, dtype=images.dtype)
-
-    for i in range(batch_size):
-        masked_idx = torch.randperm(num_patches, device=images.device)[:num_masked]
-        patch_mask[i, masked_idx] = 0
+    if num_masked > 0:
+        noise = torch.rand(batch_size, num_patches, device=images.device)
+        masked_idx = noise.topk(num_masked, dim=1, largest=False).indices
+        patch_mask.scatter_(1, masked_idx, 0)
 
     patch_mask = patch_mask.view(batch_size, patches_h, patches_w)
     patch_mask = patch_mask.repeat_interleave(patch_size, dim=1).repeat_interleave(patch_size, dim=2)

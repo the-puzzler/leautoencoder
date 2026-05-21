@@ -1,3 +1,4 @@
+import copy
 from pathlib import Path
 import torch
 import torch.nn.functional as F
@@ -5,18 +6,18 @@ from tqdm.auto import tqdm
 
 from leae.autoencoder import Autoencoder
 from leae.logging import TrainingLogger
-from leae.masking import apply_square_crop, sample_square_crop_boxes
 from leae.prep_data import load_data
 from leae.sigreg import SIGReg, latent_to_sigreg_samples
 
-ae = Autoencoder(in_channels=3, hidden_dim=128, latent_channels=32, output_size=128)
+ae = Autoencoder(in_channels=3, hidden_dim=64, latent_channels=32, output_size=32)
 
 
-def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
+def save_checkpoint(model, enc_ema, optimizer, log_dir, percent, epoch, global_step):
     checkpoint_path = Path(log_dir) / f"checkpoint_{percent}.pt"
     torch.save(
         {
             "model_state_dict": model.state_dict(),
+            "enc_ema_state_dict": enc_ema.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "epoch": epoch,
             "global_step": global_step,
@@ -30,14 +31,18 @@ def main():
     metric_log_every = 10 # steps
     image_log_every = 500 # steps
     test_every = 2000 # steps
-    crop_ratio = 0.15
+    ema_decay = 0.999
     sigreg_weight = 0.03
     log_dir = "logs"
     num_log_images = 8
     learning_rate = 1e-4
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train_loader, test_loader = load_data(batch_size=128, pin_memory=device.type == "cuda", dataset_name="celeba")
+    train_loader, test_loader = load_data(batch_size=128, pin_memory=device.type == "cuda", dataset_name="cifar10")
     model = ae.to(device)
+    enc_ema = copy.deepcopy(model).to(device)
+    for param in enc_ema.parameters():
+        param.requires_grad_(False)
+    enc_ema.eval()
     sigreg = SIGReg().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(0, 1))
@@ -49,11 +54,24 @@ def main():
     next_checkpoint_idx = 0
 
     Path(run_dir).mkdir(parents=True, exist_ok=True)
-    save_checkpoint(model, optimizer, run_dir, checkpoint_percents[next_checkpoint_idx], epoch=0, global_step=0)
+    save_checkpoint(model, enc_ema, optimizer, run_dir, checkpoint_percents[next_checkpoint_idx], epoch=0, global_step=0)
     next_checkpoint_idx += 1
+
+    def update_encoder_ema():
+        for ema_param, param in zip(enc_ema.stem.parameters(), model.stem.parameters()):
+            ema_param.data.mul_(ema_decay).add_(param.data, alpha=1.0 - ema_decay)
+        for ema_param, param in zip(enc_ema.encoder_features.parameters(), model.encoder_features.parameters()):
+            ema_param.data.mul_(ema_decay).add_(param.data, alpha=1.0 - ema_decay)
+        if isinstance(model.latent_norm, torch.nn.BatchNorm1d):
+            enc_ema.latent_norm.weight.data.mul_(ema_decay).add_(model.latent_norm.weight.data, alpha=1.0 - ema_decay)
+            enc_ema.latent_norm.bias.data.mul_(ema_decay).add_(model.latent_norm.bias.data, alpha=1.0 - ema_decay)
+            enc_ema.latent_norm.running_mean.data.copy_(model.latent_norm.running_mean.data)
+            enc_ema.latent_norm.running_var.data.copy_(model.latent_norm.running_var.data)
+            enc_ema.latent_norm.num_batches_tracked.data.copy_(model.latent_norm.num_batches_tracked.data)
 
     def run_test(epoch, global_step):
         model.eval()
+        enc_ema.eval()
         test_loss = 0.0
         test_mse = 0.0
         test_sigreg = 0.0
@@ -61,27 +79,22 @@ def main():
         test_images = None
         test_recon = None
 
-        with torch.no_grad():
-            for images, _ in tqdm(test_loader, desc=f"test  {epoch:02d}", leave=False):
-                images = images.to(device, non_blocking=True)
+        for images, _ in tqdm(test_loader, desc=f"test  {epoch:02d}", leave=False):
+            images = images.to(device, non_blocking=True)
+            with torch.no_grad():
                 z = model.encode(images)
                 recon = model.decode(z)
-                top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
-                crop_x = apply_square_crop(images, top, left, crop_size)
-                crop_rec_x = apply_square_crop(recon, top, left, crop_size)
-                crop_z = model.encode(crop_x, update_latent_norm=False)
-                crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False)
-                mse_loss = F.mse_loss(crop_z, crop_rec_z)
-                sigreg_loss = sigreg_weight * (
-                    sigreg(latent_to_sigreg_samples(crop_z)) + sigreg(latent_to_sigreg_samples(crop_rec_z))
-                )
-                loss = mse_loss + sigreg_loss
-                test_loss += loss.item() * images.size(0)
-                test_mse += mse_loss.item() * images.size(0)
-                test_sigreg += sigreg_loss.item() * images.size(0)
-                test_count += images.size(0)
-                test_images = images
-                test_recon = recon
+                target_z = enc_ema.encode(images, update_latent_norm=False).detach()
+                recon_z = enc_ema.encode(recon, update_latent_norm=False)
+                mse_loss = F.mse_loss(target_z, recon_z)
+            sigreg_loss = sigreg_weight * sigreg(latent_to_sigreg_samples(z))
+            loss = mse_loss + sigreg_loss
+            test_loss += loss.item() * images.size(0)
+            test_mse += mse_loss.item() * images.size(0)
+            test_sigreg += sigreg_loss.item() * images.size(0)
+            test_count += images.size(0)
+            test_images = images
+            test_recon = recon
 
         test_image_path = logger.log_images("test", epoch, global_step, test_images, test_recon)
         logger.log_metrics(
@@ -115,28 +128,23 @@ def main():
             x : image
             enc(x) --> z
             dec(z) --> rec_x
-            crop(x) --> c_x
-            crop(rec_x) --> crec_x
-            enc(c_x) --> c_z
-            enc(crec_x) --> crec_z
-            Loss = mse(c_z, crec_z) + sigreg(c_z, crec_z)
+            enc_ema(x) --> t_z
+            enc_ema(rec_x) --> trec_z
+            Loss = mse(t_z, trec_z) + sigreg
             """
             images = images.to(device, non_blocking=True)
             z = model.encode(images)
             recon = model.decode(z)
-            top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
-            crop_x = apply_square_crop(images, top, left, crop_size)
-            crop_rec_x = apply_square_crop(recon, top, left, crop_size)
-            crop_z = model.encode(crop_x, update_latent_norm=False)
-            crop_rec_z = model.encode(crop_rec_x, update_latent_norm=False)
-            mse_loss = F.mse_loss(crop_z, crop_rec_z)
-            sigreg_loss = sigreg_weight * (
-                sigreg(latent_to_sigreg_samples(crop_z)) + sigreg(latent_to_sigreg_samples(crop_rec_z))
-            )
+            with torch.no_grad():
+                target_z = enc_ema.encode(images, update_latent_norm=False).detach()
+            recon_z = enc_ema.encode(recon, update_latent_norm=False)
+            mse_loss = F.mse_loss(target_z, recon_z)
+            sigreg_loss = sigreg_weight * sigreg(latent_to_sigreg_samples(z))
             loss = mse_loss + sigreg_loss
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
+            update_encoder_ema()
             global_step += 1
             train_loss += loss.item() * images.size(0)
             train_mse += mse_loss.item() * images.size(0)
@@ -150,6 +158,7 @@ def main():
             ):
                 save_checkpoint(
                     model,
+                    enc_ema,
                     optimizer,
                     run_dir,
                     checkpoint_percents[next_checkpoint_idx],

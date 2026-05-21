@@ -47,3 +47,12 @@ The batch norm fix was that the crop arms should not contribute to batch norm (c
 just realised that data is normed to -1 -> 1 yet model output was constrained 0-1.... idiot.
 
 lr needs to be 1e-4, 1e-3 wth large conv model was unstable
+
+
+we are training it to say: these two resized crops should be the same acording to you. if theyre not the same, loss is high, it tries to become invariant to the difference which is impossible if theyre very different, in which case the decoder changes what it generated. but if theyre similar, it just becomes invariant to the differnce. thats the crucial point we need another intervention. 
+
+ema judge could address this as an 'impartial' but slowly updating function.
+
+with an ema as judge, you do sigreg on z only and you dont need crops anymroe..? 
+--> so with many masks of differnt types, it is actually at the same quality as mse pretty much (bar some colour but that coul dbe fixed by including real view also)
+
