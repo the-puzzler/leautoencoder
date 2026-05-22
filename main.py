@@ -16,7 +16,7 @@ from leae.masking import (
 from leae.prep_data import load_data
 from leae.sigreg import SIGReg, latent_to_sigreg_samples
 
-ae = Autoencoder(in_channels=3, hidden_dim=128, latent_channels=32, output_size=128)
+ae = Autoencoder(in_channels=3, hidden_dim=128, latent_channels=4, output_size=128)
 
 
 def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):

@@ -56,3 +56,7 @@ ema judge could address this as an 'impartial' but slowly updating function.
 with an ema as judge, you do sigreg on z only and you dont need crops anymroe..? 
 --> so with many masks of differnt types, it is actually at the same quality as mse pretty much (bar some colour but that coul dbe fixed by including real view also)
 
+
+currently running baseline and step frozen on celebA with: crop view, 5 stack
+
+would be good to test a higher compression with the 5 stacker.
