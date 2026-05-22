@@ -6,10 +6,9 @@ from torchvision.utils import save_image
 
 
 class TrainingLogger:
-    def __init__(self, log_dir="logs", num_images=8, image_value_range=(-1, 1)):
+    def __init__(self, log_dir="logs", num_images=8, image_value_range=(-1, 1), run_dir=None):
         root_dir = Path(log_dir)
-        run_id = self.next_run_id(root_dir)
-        self.log_dir = root_dir / str(run_id)
+        self.log_dir = Path(run_dir) if run_dir is not None else root_dir / str(self.next_run_id(root_dir))
         self.image_dir = self.log_dir / "reconstructions"
         self.metrics_path = self.log_dir / "metrics.tsv"
         self.metrics_plot_path = self.log_dir / "metrics.png"
