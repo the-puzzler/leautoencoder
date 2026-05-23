@@ -9,7 +9,16 @@ from leae.logging import TrainingLogger
 from leae.masking import make_inpainted_input
 from leae.prep_data import load_data
 
-ae = Autoencoder(in_channels=3, hidden_dim=128, latent_channels=32, output_size=128)
+ae = Autoencoder(
+    in_channels=3,
+    hidden_dim=128,
+    latent_channels=128,
+    output_size=128,
+    pooled_latent=True,
+    collapse_style="mlp",
+    expand_style="mlp",
+    pooled_map_channels=128,
+)
 
 
 def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
@@ -27,13 +36,13 @@ def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
 
 
 def main():
-    epochs = 10
+    epochs = 50
     metric_log_every = 10  # steps
     image_log_every = 500  # steps
     log_dir = "logs"
     num_log_images = 8
-    inpaint_mask_ratio = 0.35
-    learning_rate = 1e-4
+    inpaint_mask_ratio = 0.5
+    learning_rate = 1e-3
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader, test_loader = load_data(batch_size=128, pin_memory=device.type == "cuda", dataset_name="celeba")
     model = ae.to(device)

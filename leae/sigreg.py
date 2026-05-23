@@ -5,6 +5,8 @@ def latent_to_sigreg_samples(latent):
     if latent.ndim != 4:
         raise ValueError(f"expected latent with shape [batch, channels, height, width], got {tuple(latent.shape)}")
     batch_size, channels, height, width = latent.shape
+    if height == 1 and width == 1:
+        return latent.view(batch_size, channels)
     return latent.permute(2, 3, 0, 1).reshape(height * width, batch_size, channels)
 
 
