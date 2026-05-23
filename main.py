@@ -1,4 +1,3 @@
-import copy
 from pathlib import Path
 
 import torch
@@ -37,7 +36,6 @@ def main():
     image_log_every = 500  # steps
     test_every = 2000  # steps
     sigreg_weight = 0.03
-    plain_view_weight = 1.0
     crop_ratio = 0.15
     inpaint_mask_ratio = 0.35
     log_dir = "logs"
@@ -46,10 +44,6 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader, test_loader = load_data(batch_size=128, pin_memory=device.type == "cuda", dataset_name="celeba")
     model = ae.to(device)
-    target_encoder = copy.deepcopy(model).to(device)
-    for param in target_encoder.parameters():
-        param.requires_grad_(False)
-    target_encoder.eval()
     sigreg = SIGReg().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     logger = TrainingLogger(log_dir=log_dir, num_images=num_log_images, image_value_range=(0, 1))
@@ -70,13 +64,8 @@ def main():
         crop_recon = apply_square_crop(recon, top, left, crop_size)
         return crop_images, crop_recon
 
-    def sync_target_encoder():
-        target_encoder.load_state_dict(model.state_dict())
-        target_encoder.eval()
-
     def run_test(epoch, global_step):
         model.eval()
-        target_encoder.eval()
         test_loss = 0.0
         test_mse = 0.0
         test_sigreg = 0.0
@@ -91,13 +80,9 @@ def main():
                 z = model.encode(masked_images)
                 recon = model.decode(z)
                 crop_images, crop_recon = crop_resize_views(images, recon)
-                target_crop_z = target_encoder.encode(crop_images, update_latent_norm=False)
-                recon_crop_z = target_encoder.encode(crop_recon, update_latent_norm=False)
-                crop_mse = F.mse_loss(target_crop_z, recon_crop_z)
-                target_z = target_encoder.encode(images, update_latent_norm=False)
-                recon_z = target_encoder.encode(recon, update_latent_norm=False)
-                plain_mse = F.mse_loss(target_z, recon_z)
-                mse_loss = (crop_mse + plain_view_weight * plain_mse) / (1.0 + plain_view_weight)
+                target_crop_z = model.encode(crop_images, update_latent_norm=False)
+                recon_crop_z = model.encode(crop_recon, update_latent_norm=False)
+                mse_loss = F.mse_loss(target_crop_z, recon_crop_z)
             sigreg_loss = sigreg_weight * sigreg(latent_to_sigreg_samples(z))
             loss = mse_loss + sigreg_loss
             test_loss += loss.item() * images.size(0)
@@ -139,30 +124,23 @@ def main():
             x : clean image
             enc(inpaint(x)) --> z
             dec(z) --> rec_x
-            frozen step target encoder judges rec_x against clean x
+            live encoder judges rec_x against clean x
             across a shared crop-resize view
-            Loss = avg(mse crop view, mse plain) + sigreg
+            Loss = mse crop view + sigreg
             """
             images = images.to(device, non_blocking=True)
             masked_images = make_inpainted_input(images, mask_ratio=inpaint_mask_ratio)
             z = model.encode(masked_images)
             recon = model.decode(z)
             crop_images, crop_recon = crop_resize_views(images, recon)
-            with torch.no_grad():
-                target_crop_z = target_encoder.encode(crop_images, update_latent_norm=False)
-            recon_crop_z = target_encoder.encode(crop_recon, update_latent_norm=False)
-            crop_mse = F.mse_loss(target_crop_z, recon_crop_z)
-            with torch.no_grad():
-                target_z = target_encoder.encode(images, update_latent_norm=False)
-            recon_z = target_encoder.encode(recon, update_latent_norm=False)
-            plain_mse = F.mse_loss(target_z, recon_z)
-            mse_loss = (crop_mse + plain_view_weight * plain_mse) / (1.0 + plain_view_weight)
+            target_crop_z = model.encode(crop_images, update_latent_norm=False)
+            recon_crop_z = model.encode(crop_recon, update_latent_norm=False)
+            mse_loss = F.mse_loss(target_crop_z, recon_crop_z)
             sigreg_loss = sigreg_weight * sigreg(latent_to_sigreg_samples(z))
             loss = mse_loss + sigreg_loss
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
-            sync_target_encoder()
             global_step += 1
             train_loss += loss.item() * images.size(0)
             train_mse += mse_loss.item() * images.size(0)
