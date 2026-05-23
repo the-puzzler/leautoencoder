@@ -1,4 +1,5 @@
 import copy
+import os
 from pathlib import Path
 
 import torch
@@ -12,15 +13,18 @@ from leae.masking import apply_square_crop, make_inpainted_input, sample_square_
 from leae.prep_data import load_data
 from leae.sigreg import SIGReg, latent_to_sigreg_samples
 
+LATENT_CHANNELS = int(os.environ.get("LEAE_LATENT_CHANNELS", "128"))
+POOLED_MAP_CHANNELS = int(os.environ.get("LEAE_POOLED_MAP_CHANNELS", "128"))
+
 ae = Autoencoder(
     in_channels=3,
     hidden_dim=128,
-    latent_channels=128,
+    latent_channels=LATENT_CHANNELS,
     output_size=128,
     pooled_latent=True,
     collapse_style="mlp",
     expand_style="mlp",
-    pooled_map_channels=128,
+    pooled_map_channels=POOLED_MAP_CHANNELS,
 )
 
 
@@ -57,9 +61,6 @@ def main():
     sigreg_weight = 0.03
     crop_ratio = 0.15
     inpaint_mask_ratio = 0.35
-    latent_match_weight = 1.0
-    clean_crop_weight = 1.0
-    masked_crop_weight = 1.0
     log_dir = "logs"
     num_log_images = 8
     learning_rate = 1e-3
@@ -96,11 +97,8 @@ def main():
         crop_masked_recon = apply_square_crop(masked_recon, top, left, crop_size)
         return crop_images, crop_clean_recon, crop_masked_recon
 
-    def judge_crop_loss(crop_images, crop_recon):
-        with torch.no_grad():
-            target_z = target_encoder.encode(crop_images, update_latent_norm=False)
-        recon_z = target_encoder.encode(crop_recon, update_latent_norm=False)
-        return F.mse_loss(target_z, recon_z)
+    def judge_encode(images):
+        return target_encoder.encode(images, update_latent_norm=False)
 
     def sync_target_encoder():
         target_encoder.load_state_dict(model.state_dict())
@@ -125,15 +123,14 @@ def main():
                 clean_recon = model.decode(z_clean)
                 z_masked = model.encode(masked_images)
                 masked_recon = model.decode(z_masked)
+                clean_recon_z = judge_encode(clean_recon)
+                masked_recon_z = judge_encode(masked_recon)
                 crop_images, crop_clean_recon, crop_masked_recon = crop_resize_views(images, clean_recon, masked_recon)
-                latent_loss = F.mse_loss(z_masked, z_clean)
-                clean_crop_loss = judge_crop_loss(crop_images, crop_clean_recon)
-                masked_crop_loss = judge_crop_loss(crop_images, crop_masked_recon)
-                mse_loss = (
-                    latent_match_weight * latent_loss
-                    + clean_crop_weight * clean_crop_loss
-                    + masked_crop_weight * masked_crop_loss
-                ) / (latent_match_weight + clean_crop_weight + masked_crop_weight)
+                target_z = judge_encode(crop_images)
+                consistency_loss = F.mse_loss(clean_recon_z, masked_recon_z)
+                clean_crop_loss = F.mse_loss(target_z, judge_encode(crop_clean_recon))
+                masked_crop_loss = F.mse_loss(target_z, judge_encode(crop_masked_recon))
+                mse_loss = (consistency_loss + clean_crop_loss + masked_crop_loss) / 3
             sigreg_loss = 0.5 * sigreg_weight * (
                 sigreg(latent_to_sigreg_samples(z_clean)) + sigreg(latent_to_sigreg_samples(z_masked))
             )
@@ -146,17 +143,7 @@ def main():
             test_clean_recon = clean_recon
             test_masked_recon = masked_recon
 
-        test_image_path = save_branch_images(
-            logger.image_dir,
-            "test",
-            epoch,
-            global_step,
-            test_images,
-            test_clean_recon,
-            test_masked_recon,
-            num_log_images,
-            (0, 1),
-        )
+        test_image_path = save_branch_images(logger.image_dir, "test", epoch, global_step, test_images, test_clean_recon, test_masked_recon, num_log_images, (0, 1))
         logger.log_metrics(
             "test",
             epoch,
@@ -191,15 +178,15 @@ def main():
             z_masked = model.encode(masked_images)
             masked_recon = model.decode(z_masked)
 
+            clean_recon_z = judge_encode(clean_recon)
+            masked_recon_z = judge_encode(masked_recon)
             crop_images, crop_clean_recon, crop_masked_recon = crop_resize_views(images, clean_recon, masked_recon)
-            latent_loss = F.mse_loss(z_masked, z_clean.detach())
-            clean_crop_loss = judge_crop_loss(crop_images, crop_clean_recon)
-            masked_crop_loss = judge_crop_loss(crop_images, crop_masked_recon)
-            mse_loss = (
-                latent_match_weight * latent_loss
-                + clean_crop_weight * clean_crop_loss
-                + masked_crop_weight * masked_crop_loss
-            ) / (latent_match_weight + clean_crop_weight + masked_crop_weight)
+            with torch.no_grad():
+                target_z = judge_encode(crop_images)
+            consistency_loss = F.mse_loss(clean_recon_z, masked_recon_z)
+            clean_crop_loss = F.mse_loss(target_z, judge_encode(crop_clean_recon))
+            masked_crop_loss = F.mse_loss(target_z, judge_encode(crop_masked_recon))
+            mse_loss = (consistency_loss + clean_crop_loss + masked_crop_loss) / 3
             sigreg_loss = 0.5 * sigreg_weight * (
                 sigreg(latent_to_sigreg_samples(z_clean)) + sigreg(latent_to_sigreg_samples(z_masked))
             )
@@ -222,17 +209,7 @@ def main():
 
             image_path = ""
             if global_step % image_log_every == 0:
-                image_path = save_branch_images(
-                    logger.image_dir,
-                    "train",
-                    epoch,
-                    global_step,
-                    images,
-                    clean_recon,
-                    masked_recon,
-                    num_log_images,
-                    (0, 1),
-                )
+                image_path = save_branch_images(logger.image_dir, "train", epoch, global_step, images, clean_recon, masked_recon, num_log_images, (0, 1))
 
             if global_step % metric_log_every == 0:
                 logger.log_metrics("train", epoch, global_step, loss.item(), mse_loss.item(), sigreg_loss.item(), image_path=image_path)

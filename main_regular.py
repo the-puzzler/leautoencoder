@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import torch
@@ -9,15 +10,18 @@ from leae.logging import TrainingLogger
 from leae.masking import make_inpainted_input
 from leae.prep_data import load_data
 
+LATENT_CHANNELS = int(os.environ.get("LEAE_LATENT_CHANNELS", "128"))
+POOLED_MAP_CHANNELS = int(os.environ.get("LEAE_POOLED_MAP_CHANNELS", "128"))
+
 ae = Autoencoder(
     in_channels=3,
     hidden_dim=128,
-    latent_channels=128,
+    latent_channels=LATENT_CHANNELS,
     output_size=128,
     pooled_latent=True,
     collapse_style="mlp",
     expand_style="mlp",
-    pooled_map_channels=128,
+    pooled_map_channels=POOLED_MAP_CHANNELS,
 )
 
 
