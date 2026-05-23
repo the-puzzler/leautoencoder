@@ -26,7 +26,7 @@ def load_data(
     batch_size: int = 64,
     test_batch_size: int | None = None,
     data_dir: str | Path = "data",
-    num_workers: int = 2,
+    num_workers: int = 5,
     pin_memory: bool = True,
     dataset_name: str = "cifar10",
 ) -> tuple[DataLoader, DataLoader]:

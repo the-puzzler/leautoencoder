@@ -19,6 +19,30 @@ def apply_mask(images, mask):
     return images * mask
 
 
+def make_inpainting_mask(images, mask_ratio=0.35):
+    if not 0.0 < mask_ratio < 1.0:
+        raise ValueError(f"mask_ratio must be in (0, 1), got {mask_ratio}")
+
+    batch_size, _, height, width = images.shape
+    mask_side = max(1, int(round((mask_ratio ** 0.5) * min(height, width))))
+    max_top = height - mask_side
+    max_left = width - mask_side
+    top = torch.randint(max_top + 1, (batch_size,), device=images.device)
+    left = torch.randint(max_left + 1, (batch_size,), device=images.device)
+
+    ys = torch.arange(height, device=images.device).view(1, height, 1)
+    xs = torch.arange(width, device=images.device).view(1, 1, width)
+    hole_y = (ys >= top.view(batch_size, 1, 1)) & (ys < (top + mask_side).view(batch_size, 1, 1))
+    hole_x = (xs >= left.view(batch_size, 1, 1)) & (xs < (left + mask_side).view(batch_size, 1, 1))
+    hole = hole_y & hole_x
+    return (~hole).to(dtype=images.dtype).unsqueeze(1)
+
+
+def make_inpainted_input(images, mask_ratio=0.35):
+    mask = make_inpainting_mask(images, mask_ratio=mask_ratio)
+    return fill_mask_with_image_average(images, mask)
+
+
 def apply_box_blur(images, kernel_size=5):
     if kernel_size <= 0 or kernel_size % 2 == 0:
         raise ValueError(f"kernel_size must be a positive odd integer, got {kernel_size}")

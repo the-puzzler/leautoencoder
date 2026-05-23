@@ -1,5 +1,6 @@
 import copy
 from pathlib import Path
+
 import torch
 import torch.nn.functional as F
 from tqdm.auto import tqdm
@@ -7,16 +8,14 @@ from tqdm.auto import tqdm
 from leae.autoencoder import Autoencoder
 from leae.logging import TrainingLogger
 from leae.masking import (
-    apply_heavy_blur,
-    apply_high_pass_filter,
-    apply_local_contrast_normalization,
-    apply_saturation_contrast_boost,
-    apply_sobel_edges,
+    apply_square_crop,
+    make_inpainted_input,
+    sample_square_crop_boxes,
 )
 from leae.prep_data import load_data
 from leae.sigreg import SIGReg, latent_to_sigreg_samples
 
-ae = Autoencoder(in_channels=3, hidden_dim=128, latent_channels=4, output_size=128)
+ae = Autoencoder(in_channels=3, hidden_dim=128, latent_channels=32, output_size=128)
 
 
 def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
@@ -33,12 +32,14 @@ def save_checkpoint(model, optimizer, log_dir, percent, epoch, global_step):
     )
 
 def main():
-    epochs = 50
-    metric_log_every = 10 # steps
-    image_log_every = 500 # steps
-    test_every = 2000 # steps
+    epochs = 10
+    metric_log_every = 10  # steps
+    image_log_every = 500  # steps
+    test_every = 2000  # steps
     sigreg_weight = 0.03
     plain_view_weight = 1.0
+    crop_ratio = 0.15
+    inpaint_mask_ratio = 0.35
     log_dir = "logs"
     num_log_images = 8
     learning_rate = 1e-4
@@ -63,14 +64,11 @@ def main():
     save_checkpoint(model, optimizer, run_dir, checkpoint_percents[next_checkpoint_idx], epoch=0, global_step=0)
     next_checkpoint_idx += 1
 
-    def transformed_views(images):
-        return [
-            apply_heavy_blur(images),
-            apply_saturation_contrast_boost(images),
-            apply_sobel_edges(images),
-            apply_high_pass_filter(images),
-            apply_local_contrast_normalization(images),
-        ]
+    def crop_resize_views(images, recon):
+        top, left, crop_size = sample_square_crop_boxes(images, crop_ratio=crop_ratio)
+        crop_images = apply_square_crop(images, top, left, crop_size)
+        crop_recon = apply_square_crop(recon, top, left, crop_size)
+        return crop_images, crop_recon
 
     def sync_target_encoder():
         target_encoder.load_state_dict(model.state_dict())
@@ -88,21 +86,18 @@ def main():
 
         for images, _ in tqdm(test_loader, desc=f"test  {epoch:02d}", leave=False):
             images = images.to(device, non_blocking=True)
+            masked_images = make_inpainted_input(images, mask_ratio=inpaint_mask_ratio)
             with torch.no_grad():
-                z = model.encode(images)
+                z = model.encode(masked_images)
                 recon = model.decode(z)
-                target_views = transformed_views(images)
-                recon_views = transformed_views(recon)
-                transformed_mse = 0.0
-                for target_view, recon_view in zip(target_views, recon_views):
-                    target_z = target_encoder.encode(target_view, update_latent_norm=False)
-                    recon_z = target_encoder.encode(recon_view, update_latent_norm=False)
-                    transformed_mse = transformed_mse + F.mse_loss(target_z, recon_z)
-                transformed_mse = transformed_mse / len(target_views)
+                crop_images, crop_recon = crop_resize_views(images, recon)
+                target_crop_z = target_encoder.encode(crop_images, update_latent_norm=False)
+                recon_crop_z = target_encoder.encode(crop_recon, update_latent_norm=False)
+                crop_mse = F.mse_loss(target_crop_z, recon_crop_z)
                 target_z = target_encoder.encode(images, update_latent_norm=False)
                 recon_z = target_encoder.encode(recon, update_latent_norm=False)
                 plain_mse = F.mse_loss(target_z, recon_z)
-                mse_loss = (transformed_mse + plain_view_weight * plain_mse) / (1.0 + plain_view_weight)
+                mse_loss = (crop_mse + plain_view_weight * plain_mse) / (1.0 + plain_view_weight)
             sigreg_loss = sigreg_weight * sigreg(latent_to_sigreg_samples(z))
             loss = mse_loss + sigreg_loss
             test_loss += loss.item() * images.size(0)
@@ -141,30 +136,27 @@ def main():
         for images, _ in train_loader:
             """
             plan:
-            x : image
-            enc(x) --> z
+            x : clean image
+            enc(inpaint(x)) --> z
             dec(z) --> rec_x
-            frozen step target encoder judges both branches
-            across the five-view transform stack on x and rec_x
-            Loss = avg(mse detail bundle, mse plain) + sigreg
+            frozen step target encoder judges rec_x against clean x
+            across a shared crop-resize view
+            Loss = avg(mse crop view, mse plain) + sigreg
             """
             images = images.to(device, non_blocking=True)
-            z = model.encode(images)
+            masked_images = make_inpainted_input(images, mask_ratio=inpaint_mask_ratio)
+            z = model.encode(masked_images)
             recon = model.decode(z)
-            target_views = transformed_views(images)
-            recon_views = transformed_views(recon)
-            transformed_mse = 0.0
-            for target_view, recon_view in zip(target_views, recon_views):
-                with torch.no_grad():
-                    target_z = target_encoder.encode(target_view, update_latent_norm=False)
-                recon_z = target_encoder.encode(recon_view, update_latent_norm=False)
-                transformed_mse = transformed_mse + F.mse_loss(target_z, recon_z)
-            transformed_mse = transformed_mse / len(target_views)
+            crop_images, crop_recon = crop_resize_views(images, recon)
+            with torch.no_grad():
+                target_crop_z = target_encoder.encode(crop_images, update_latent_norm=False)
+            recon_crop_z = target_encoder.encode(crop_recon, update_latent_norm=False)
+            crop_mse = F.mse_loss(target_crop_z, recon_crop_z)
             with torch.no_grad():
                 target_z = target_encoder.encode(images, update_latent_norm=False)
             recon_z = target_encoder.encode(recon, update_latent_norm=False)
             plain_mse = F.mse_loss(target_z, recon_z)
-            mse_loss = (transformed_mse + plain_view_weight * plain_mse) / (1.0 + plain_view_weight)
+            mse_loss = (crop_mse + plain_view_weight * plain_mse) / (1.0 + plain_view_weight)
             sigreg_loss = sigreg_weight * sigreg(latent_to_sigreg_samples(z))
             loss = mse_loss + sigreg_loss
             optimizer.zero_grad(set_to_none=True)
