@@ -1,49 +1,46 @@
-# `leautoencoder`
+# Self-Teaching Autoencoder
 
-A small repo for a self-teaching autoencoder.
+A small experiment in training an autoencoder to teach itself.
 
-Instead of training only with pixel reconstruction, the model also learns from its own latent judgments. The core idea is: if a masked view and a clean view come from the same image, their reconstructions should become consistent under the model's own encoder.
+Instead of relying only on pixel reconstruction loss, the model also asks a second question: if a clean view and a masked view come from the same image, can their reconstructions be made consistent in the model's own latent space?
 
 **Blog post:** [self-teaching-autoencoder](https://the-puzzler.github.io/share/self-teaching-autoencoder.html)
 
-![Our method vs baseline at latent 512](logs/pair_comparisons/our_method_vs_baseline_latent512_checkpoint100.png)
+![Our method vs baseline](our_method_vs_baseline_latent512_checkpoint100.png)
 
-Shown above: `our method` vs `baseline` from the `100%` checkpoint at latent size `512`.
+The image above compares the current method against a plain masked-autoencoder baseline at latent size `512`, using the `100%` checkpoint.
 
-## What This Repo Is
+## Overview
 
-This repo trains autoencoders on `CelebA` center-cropped to `128x128`.
+This repo trains autoencoders on `CelebA`, center-cropped to `128x128`.
 
-There are three main training entrypoints:
+The main training scripts are:
 
-- `main.py`: the current symmetric self-teaching variant
-- `main_regular.py`: the plain masked-image reconstruction baseline
-- `main_clean_branch.py`: an experimental less-symmetric variant
+- `main.py`: the current self-teaching method
+- `main_regular.py`: the baseline masked-image reconstruction model
 
-The autoencoder itself lives in `leae/autoencoder.py`.
+The model itself lives in `leae/autoencoder.py`.
 
-## The Main Idea
+## Core Idea
 
-The model is trained on two views of the same image:
+The model sees two versions of the same image:
 
-- a clean image
-- a masked image, where a square region is removed and filled with the image average
+- the original clean image
+- a masked version with a square region removed and filled with the image average
 
-Both views go through the same autoencoder. The model then uses an EMA-style target copy of its own encoder as a judge.
+Both views are passed through the same autoencoder. A slowly refreshed copy of the encoder then acts as a judge. The autoencoder is trained so that its reconstructions become mutually consistent under that judge.
 
-So this is "self-teaching" in a literal sense:
+That is why this is a self-teaching autoencoder:
 
 - the student is the current autoencoder
-- the teacher is a slowly refreshed copy of the same encoder
-- the learning signal comes from consistency in latent space, not just from pixels
+- the teacher is a target copy of the same encoder
+- the supervision comes partly from the model's own latent geometry
 
-## The Two Objectives
+## Current Objective
 
-### 1. Current Repo: The More Symmetric JEPA-like Variant
+The current repo is centered on the symmetric latent-consistency objective in `main.py`.
 
-This is the version in `main.py`.
-
-Both clean and masked inputs are encoded and decoded:
+For an image `x`:
 
 ```text
 z_clean = E(x)
@@ -53,7 +50,7 @@ z_masked = E(mask(x))
 x_masked_hat = D(z_masked)
 ```
 
-Then the target encoder judges the reconstructions:
+The target encoder `T` is then used to score the reconstructions:
 
 ```text
 consistency_loss =
@@ -64,64 +61,52 @@ clean_crop_loss =
 
 masked_crop_loss =
     MSE(T(crop(x)), T(crop(x_masked_hat)))
+```
 
+These are averaged into the main latent objective:
+
+```text
 mse_loss = average(consistency_loss, clean_crop_loss, masked_crop_loss)
 ```
 
-And there is also a latent regularizer:
+There is also a latent regularizer on both clean and masked codes:
 
 ```text
 sigreg_loss =
     0.5 * lambda * (SIGReg(z_clean) + SIGReg(z_masked))
 ```
 
-Final objective:
+Final training loss:
 
 ```text
 loss = mse_loss + sigreg_loss
 ```
 
-Why this is the more symmetric version:
+The important part is the symmetry:
 
-- both branches pass through the full autoencoder
+- both clean and masked branches go through the full autoencoder
 - both reconstructions are judged in the same latent space
-- both branches contribute equally to the latent consistency objective
-
-This is the version the repo is currently centered on.
-
-### 2. The Less Symmetric Variant
-
-This lives in `main_clean_branch.py`.
-
-Here the masked branch is pushed directly toward the clean latent:
-
-```text
-latent_loss = MSE(z_masked, stopgrad(z_clean))
-```
-
-It still keeps the crop-based teacher losses and the same `SIGReg` term, but the main latent matching is less symmetric because:
-
-- the clean latent acts more like the target
-- the masked latent is the thing being pulled toward it
-- the clean branch is not judged in exactly the same way as the masked branch
-
-In short:
-
-- `main.py`: reconstruction-to-reconstruction latent consistency
-- `main_clean_branch.py`: masked-latent-to-clean-latent matching
+- both branches help define what a "good" reconstruction is
 
 ## Baseline
 
-The baseline in `main_regular.py` is just a standard masked autoencoder:
+The baseline in `main_regular.py` is intentionally simple:
 
 ```text
 recon = model(masked_image)
 loss = MSE(recon, image)
 ```
 
-No self-teaching latent objective, no target encoder, no crop consistency.
+It does not use:
 
-## Running It
+- a target encoder
+- latent consistency between branches
+- crop consistency losses
+- `SIGReg`
+
+So it serves as the direct "just reconstruct the image" comparison.
+
+## Running
 
 The repo assumes a working Python environment with PyTorch, torchvision, `datasets`, and `matplotlib`.
 
@@ -139,24 +124,24 @@ Paired experiment scripts:
 ./run_main_and_baseline_6x.sh
 ```
 
-Logs and checkpoints are written under `logs/`.
+Checkpoints and logged reconstructions are written under `logs/`.
 
 ## Repo Layout
 
-- `main.py`: current symmetric self-teaching method
-- `main_regular.py`: baseline masked autoencoder
-- `main_clean_branch.py`: less-symmetric experimental variant
-- `leae/autoencoder.py`: model definitions
+- `main.py`: current self-teaching training loop
+- `main_regular.py`: baseline training loop
+- `leae/autoencoder.py`: autoencoder architecture
 - `leae/masking.py`: masking and crop helpers
 - `leae/prep_data.py`: dataset loading
-- `latent_brush_demo/`: static browser demo for latent editing
+- `leae/sigreg.py`: latent regularizer
+- `latent_brush_demo/`: browser demo for editing pooled latents
 
-## Why This Repo Exists
+## Why This Exists
 
-This repo is for exploring a simple question:
+This repo explores a simple question:
 
-Can an autoencoder learn useful reconstructions by being asked to stay self-consistent in latent space under masking, cropping, and reconstruction, instead of relying only on direct pixel loss?
+Can an autoencoder learn stronger representations if it is trained to stay self-consistent under masking and reconstruction, instead of optimizing only direct pixel error?
 
-If you want the longer writeup and results, the blog post is here:
+For the longer writeup and results, see:
 
 **[https://the-puzzler.github.io/share/self-teaching-autoencoder.html](https://the-puzzler.github.io/share/self-teaching-autoencoder.html)**
