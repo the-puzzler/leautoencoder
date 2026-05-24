@@ -10,6 +10,10 @@ Instead of relying only on pixel reconstruction loss, the model also asks a seco
 
 The image above compares the current method against a plain masked-autoencoder baseline at latent size `512` (96x compresion).
 
+## Quick Note
+
+For best reconstruction result dont use masking objective, global pooling, or symmetric set up. Simply use autoencoder with step frozen judge latents from crop resized images.
+
 ## Overview
 
 This repo trains autoencoders on `CelebA`, center-cropped to `128x128`.
