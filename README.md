@@ -8,7 +8,7 @@ Instead of relying only on pixel reconstruction loss, the model also asks a seco
 
 ![Our method vs baseline](our_method_vs_baseline_latent512_checkpoint100.png)
 
-The image above compares the current method against a plain masked-autoencoder baseline at latent size `512`, using the `100%` checkpoint.
+The image above compares the current method against a plain masked-autoencoder baseline at latent size `512` (96x compresion).
 
 ## Overview
 
@@ -34,7 +34,6 @@ That is why this is a self-teaching autoencoder:
 
 - the student is the current autoencoder
 - the teacher is a target copy of the same encoder
-- the supervision comes partly from the model's own latent geometry
 
 ## Current Objective
 
@@ -108,23 +107,9 @@ So it serves as the direct "just reconstruct the image" comparison.
 
 ## Running
 
-The repo assumes a working Python environment with PyTorch, torchvision, `datasets`, and `matplotlib`.
+uv sync
 
-Basic runs:
-
-```bash
-./.venv/bin/python main.py
-./.venv/bin/python main_regular.py
-```
-
-Paired experiment scripts:
-
-```bash
-./run_main_and_baseline_128_512.sh
-./run_main_and_baseline_6x.sh
-```
-
-Checkpoints and logged reconstructions are written under `logs/`.
+uv run main.py
 
 ## Repo Layout
 
