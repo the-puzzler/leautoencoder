@@ -123,7 +123,6 @@ uv run main.py
 - `leae/masking.py`: masking and crop helpers
 - `leae/prep_data.py`: dataset loading
 - `leae/sigreg.py`: latent regularizer
-- `latent_brush_demo/`: browser demo for editing pooled latents
 
 ## Why This Exists
 
